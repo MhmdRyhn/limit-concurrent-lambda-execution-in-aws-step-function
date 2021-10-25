@@ -1,0 +1,173 @@
+{
+  "Comment": "This step function is executed when there is any exception occurs in the step function where there is a possibility. Then this step function is responsible to release the lock hold by that step function.",
+  "StartAt": "Acquire lock",
+  "Steps": {
+    "Get Lock": {
+      "Comment": "",
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "Acquire Lock",
+          "States": {
+            "Initialize Lock Item": {
+              "Comment": "This .....",
+              "Type": "Task",
+              "Resource": "arn:aws:states:::dynamodb:putItem",
+              "Parameters": {
+                "TableName": "${lock_table_name}",
+                "Item": {
+                  "LockName": {
+                    "S.$": "$$.StateMachine.Id"
+                  },
+                  "CurrentLockCount": {
+                    "N": "0"
+                  }
+                },
+                "ConditionExpression": "LockName <> :lockName",
+                "ExpressionAttributeValues": {
+                  ":lockName": {
+                    "S.$": "$$.StateMachine.Id"
+                  }
+                }
+              },
+              "Catch": {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "ResultPath": null,
+                "Next": "Acquire Lock"
+              },
+              "ResultPath": null,
+              "Next": "Acquire Lock"
+            },
+            "Acquire Lock": {
+              "Comment": "",
+              "Type": "Task",
+              "Resource": "arn:aws:states:::dynamodb:updateItem",
+              "Parameters": {
+                "TableName": "${lock_table_name}",
+                "Key": {
+                  "LockName": {
+                    "S.$": "$$.StateMachine.Id"
+                  }
+                },
+                "ExpressionAttributeNames": {
+                  "#CurrentLockCount": "CurrentLockCount",
+                  "#StepFunctionExecutionId.$": "$$.Execution.Id"
+                },
+                "ExpressionAttributeValues": {
+                  ":increaseBy": {
+                    "N": "1"
+                  },
+                  ":maxLimit": {
+                    "N": "${max_concurrency_allowed}"
+                  },
+                  ":lockAcquiredTime": {
+                    "S.$": "$$.State.EnteredTime"
+                  }
+                },
+                "ConditionExpression": "#CurrentLockCount <> :maxLimit and attribute_not_exists(#StepFunctionExecutionId)",
+                "UpdateExpression": "SET #CurrentLockCount = #CurrentLockCount + :increaseBy, #StepFunctionExecutionId = :lockAcquiredTime",
+                "ReturnValues": "UPDATED_NEW"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "DynamoDB.AmazonDynamoDBException"
+                  ],
+                  "MaxAttempts": 0
+                },
+                {
+                  "ErrorEquals": [
+                    "States.ALL"
+                  ],
+                  "MaxAttempts": 5,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": [
+                    "DynamoDB.AmazonDynamoDBException"
+                  ],
+                  "Next": "Initialize Lock Item",
+                  "ResultPath": "$.lockInfo.acquisitionError"
+                },
+                {
+                  "ErrorEquals": [
+                    "DynamoDB.ConditionalCheckFailedException"
+                  ],
+                  "Next": "Get Current Lock Record",
+                  "ResultPath": "$.lockInfo.acquisitionError"
+                }
+              ],
+              "End": true
+            },
+            "Get Current Lock Record": {
+              "Comment": "",
+              "Type": "Task",
+              "Resource": "arn:aws:states:::dynamodb:getItem",
+              "Parameters": {
+                "TableName": "${lock_table_name}",
+                "Key": {
+                  "LockName": {
+                    "S.$": "$$.StateMachine.Id"
+                  }
+                },
+                "ExpressionAttributeNames": {
+                  "#StateMachineId.$": "$$.StateMachine.Id"
+                },
+                "ProjectionExpression": "#StateMachineId"
+              },
+              "ResultSelector": {
+                "LockItem.$": "$.Item",
+                "LockItemString": "States.JsonToString($.Item)"
+              },
+              "ResultPath": "$.LockInfo.CurrentLockItem",
+              "Next": "Check If Lock Already Acquired"
+            },
+            "Check If Lock Already Acquired": {
+              "Comment": "...",
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "And": [
+                    {
+                      "Variable": "LockInfo.CurrentLockItem.LockItemString",
+                      "IsPresent": true
+                    },
+                    {
+                      "Variable": "LockInfo.CurrentLockItem.LockItemString",
+                      "StringMatches": "*Z*"
+                    }
+                  ],
+                  "Next": "Continue Because Lock Already Acquired"
+                }
+              ],
+              "Default": "Wait To Get Lock"
+            },
+            "Continue Because Lock Already Acquired": {
+              "Comment": "...",
+              "Type": "Pass",
+              "End": true
+            },
+            "Wait To Get Lock": {
+              "Comment": "...",
+              "Type": "Wait",
+              "Seconds": 3,
+              "Next": "Acquire Lock"
+            }
+          }
+        }
+      ],
+      "ResultPath": null,
+      "Next": "Call The Throttling Function"
+    },
+    "Call The Throttling Function": {
+      "Comment": "...",
+      "Type": "",
+      "Next": "Release Lock"
+    },
+    "Release Lock": {}
+  }
+}

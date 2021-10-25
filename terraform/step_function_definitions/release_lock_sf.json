@@ -1,0 +1,6 @@
+{
+  "Comment": "This step function is executed when there is any exception occurs in the step function where there is a possibility. Then this step function is responsible to release the lock hold by that step function.",
+  "StartAt": "",
+  "Steps": {
+  }
+}
